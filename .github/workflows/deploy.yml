@@ -1,0 +1,116 @@
+name: Deploy with Environment Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment to deploy to'
+        required: true
+        type: choice
+        options:
+          - dev
+          - sit
+          - uat
+          - prod
+      tenant:
+        description: 'Tenant identifier'
+        required: true
+        type: string
+
+jobs:
+  validate-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify and extract version from Git ref
+        uses: standardbank-cibtps/dip-platform-gh-workflows/actions/verify-version@main
+        id: git_ref
+
+      - name: Check if version has been successfully deployed to previous environments
+        run: |
+          set -e
+          
+          # Define the list of environments
+          ALL_ENVIRONMENTS=("dev" "sit" "uat" "prod")
+          TARGET_ENVIRONMENT="${{ inputs.environment }}"
+          TENANT="${{ inputs.tenant }}"
+          VERSION_SHA="${{ github.sha }}"
+          VERSION="${{ steps.git_ref.outputs.version }}"
+          
+          echo "Version to be deployed is ${VERSION//v/}"
+          echo "Target environment: $TARGET_ENVIRONMENT"
+          echo "Tenant: $TENANT"
+          
+          # Skip 'sit' environment if tenant is 'mig'
+          if [[ "$TENANT" == "mig" ]]; then
+            echo "Tenant is 'mig', skipping 'sit' environment validation"
+            # Remove 'sit' from the environments array for 'mig' tenant
+            ALL_ENVIRONMENTS=("dev" "uat" "prod")
+          fi
+          
+          # Split the version into MAJOR, MINOR, and PATCH components
+          IFS='.' read -r -a VERSION_PARTS <<< "${VERSION//v/}"
+          MAJOR="${VERSION_PARTS[0]}"
+          MINOR="${VERSION_PARTS[1]}"
+          PATCH="${VERSION_PARTS[2]}"
+          
+          # Function to check deployments in an environment
+          check_deployment() {
+            local env=$1
+            local ref_pattern=$2
+          
+            echo "Checking deployments in $env with ref pattern: $ref_pattern"
+          
+            DEPLOYMENTS=$(curl -s -H "Authorization: token ${{ github.token }}" \
+              "https://api.github.com/repos/${{ github.repository }}/deployments?environment=$env&per_page=100")
+          
+            DEPLOYMENT_IDS=$(echo "$DEPLOYMENTS" | jq -r ".[] | select(.ref | test(\"$ref_pattern\")) | .id")
+          
+            if [[ -z "$DEPLOYMENT_IDS" ]]; then
+              echo "No deployments matching pattern '$ref_pattern' found in $env"
+              return 1
+            fi
+          
+            for DEPLOYMENT_ID in $DEPLOYMENT_IDS; do
+              DEPLOYMENT_STATUS=$(curl -s -H "Authorization: token ${{ github.token }}" \
+                "https://api.github.com/repos/${{ github.repository }}/deployments/$DEPLOYMENT_ID/statuses?per_page=100")
+              SUCCESSFUL_DEPLOYMENT=$(echo "$DEPLOYMENT_STATUS" | jq 'any(.[]; .state == "success")')
+          
+              if [[ "$SUCCESSFUL_DEPLOYMENT" == "true" ]]; then
+                echo "Found successful deployment with ID $DEPLOYMENT_ID in $env"
+                return 0
+              fi
+            done
+          
+            echo "No successful deployments matching pattern '$ref_pattern' found in $env"
+            return 1
+          }
+          
+          # Loop through environments prior to the target environment
+          for ENV in "${ALL_ENVIRONMENTS[@]}"; do
+            if [[ "$ENV" == "$TARGET_ENVIRONMENT" ]]; then
+              break
+            fi
+          
+            if (( PATCH == 0 )); then
+              # For base versions, check if the exact version has been deployed successfully
+              ESCAPED_VERSION="${VERSION//./[.]}"  # Replace '.' with '[.]' for regex
+              REF_PATTERN="^$ESCAPED_VERSION$"
+            else
+              # For hotfix versions, check if any version within the same MAJOR.MINOR has been deployed successfully
+              REF_PATTERN="^v$MAJOR[.]$MINOR[.]"  # Matches any version starting with 'vMAJOR.MINOR.'
+            fi
+          
+            if ! check_deployment "$ENV" "$REF_PATTERN"; then
+              echo "Deployment check failed for environment $ENV"
+              exit 1
+            fi
+          done
+          
+          echo "All checks passed. Deployment can proceed."
+        shell: bash
+
+      - name: Deploy to target environment
+        run: |
+          echo "Deploying to ${{ inputs.environment }}"
+          # Add your actual deployment logic here
+          echo "Deployment completed successfully" 
