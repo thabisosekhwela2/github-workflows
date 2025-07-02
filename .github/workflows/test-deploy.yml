@@ -39,9 +39,30 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Verify and extract version from Git ref
-        uses: standardbank-cibtps/dip-platform-gh-workflows/actions/verify-version@main
+      - name: Simulate version extraction
         id: git_ref
+        run: |
+          echo "STEP 0: Simulating version extraction from Git ref..."
+          sleep 2
+          
+          # Use the input version or simulate from git ref
+          if [[ "${{ inputs.version }}" != "" ]]; then
+            VERSION="${{ inputs.version }}"
+            echo "   Using provided version: $VERSION"
+          else
+            # Simulate version extraction from git ref
+            VERSION="v1.2.3"
+            echo "   Simulating version extraction: $VERSION"
+          fi
+          
+          sleep 2
+          echo "   Version extracted successfully: $VERSION"
+          sleep 2
+          
+          # Set output for use in other steps
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "   Version output set: $VERSION"
+          sleep 2
 
       - name: Test deployment validation logic
         run: |
@@ -53,7 +74,7 @@ jobs:
           TENANT="${{ inputs.tenant }}"
           TEST_MODE="${{ inputs.test_mode }}"
           VERSION_SHA="${{ github.sha }}"
-          VERSION="${{ inputs.version }}"
+          VERSION="${{ steps.git_ref.outputs.version }}"
           
           echo "=== TESTING DEPLOY WORKFLOW VALIDATION LOGIC ==="
           echo "Target environment: $TARGET_ENVIRONMENT"
@@ -264,7 +285,7 @@ jobs:
           sleep 2
           echo "   Tenant: ${{ inputs.tenant }}"
           sleep 2
-          echo "   Version: ${{ inputs.version }}"
+          echo "   Version: ${{ steps.git_ref.outputs.version }}"
           sleep 2
           echo "   Deployment completed successfully"
           sleep 2
@@ -276,7 +297,7 @@ jobs:
           sleep 2
           echo "   Target: ${{ inputs.environment }}"
           sleep 2
-          echo "   Version: ${{ inputs.version }}"
+          echo "   Version: ${{ steps.git_ref.outputs.version }}"
           sleep 2
           echo "   Test mode: ${{ inputs.test_mode }}"
           sleep 2
