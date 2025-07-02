@@ -1,0 +1,14 @@
+{
+  "environments": [
+    "dev",
+    "sit", 
+    "uat",
+    "prod"
+  ],
+  "default_environments": [
+    "dev",
+    "sit",
+    "uat",
+    "prod"
+  ]
+} 

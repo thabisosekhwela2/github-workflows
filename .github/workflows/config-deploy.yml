@@ -1,0 +1,315 @@
+name: Config-Based Deploy Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment to deploy to (from config file)'
+        required: true
+        type: string
+      tenant:
+        description: 'Tenant identifier'
+        required: true
+        type: string
+      version:
+        description: 'Version to test (e.g., v1.2.3)'
+        required: true
+        type: string
+        default: 'v1.2.3'
+
+jobs:
+  get-environments:
+    runs-on: ubuntu-latest
+    outputs:
+      environments: ${{ steps.get-envs.outputs.environments }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get environments from config file
+        id: get-envs
+        run: |
+          echo "Reading environments from config file..."
+          
+          # Read environments from JSON config file
+          if [[ -f "environments.json" ]]; then
+            ENVIRONMENTS=$(cat environments.json | jq -r '.environments[]' | tr '\n' ',' | sed 's/,$//')
+            echo "Found environments in config: $ENVIRONMENTS"
+          else
+            ENVIRONMENTS="dev,sit,uat,prod"
+            echo "Config file not found, using defaults: $ENVIRONMENTS"
+          fi
+          
+          echo "environments=$ENVIRONMENTS" >> $GITHUB_OUTPUT
+
+  validate-environment:
+    needs: get-environments
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate target environment
+        run: |
+          TARGET_ENV="${{ inputs.environment }}"
+          AVAILABLE_ENVS="${{ needs.get-environments.outputs.environments }}"
+          
+          echo "Target environment: $TARGET_ENV"
+          echo "Available environments: $AVAILABLE_ENVS"
+          
+          # Convert comma-separated string to array
+          IFS=',' read -ra ENV_ARRAY <<< "$AVAILABLE_ENVS"
+          
+          # Check if target environment is valid
+          VALID=false
+          for env in "${ENV_ARRAY[@]}"; do
+            if [[ "$env" == "$TARGET_ENV" ]]; then
+              VALID=true
+              break
+            fi
+          done
+          
+          if [[ "$VALID" == "false" ]]; then
+            echo "ERROR: Invalid environment '$TARGET_ENV'"
+            echo "Available environments: ${ENV_ARRAY[*]}"
+            exit 1
+          fi
+          
+          echo "Environment validation passed!"
+
+  test-deploy-validation:
+    needs: [get-environments, validate-environment]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Simulate version extraction
+        id: git_ref
+        run: |
+          echo "STEP 0: Simulating version extraction from Git ref..."
+          sleep 2
+          
+          # Use the input version or simulate from git ref
+          if [[ "${{ inputs.version }}" != "" ]]; then
+            VERSION="${{ inputs.version }}"
+            echo "   Using provided version: $VERSION"
+          else
+            # Simulate version extraction from git ref
+            VERSION="v1.2.3"
+            echo "   Simulating version extraction: $VERSION"
+          fi
+          
+          sleep 2
+          echo "   Version extracted successfully: $VERSION"
+          sleep 2
+          
+          # Set output for use in other steps
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "   Version output set: $VERSION"
+          sleep 2
+
+      - name: Test deployment validation logic
+        run: |
+          set -e
+          
+          # Get environments from previous job
+          ENVIRONMENTS_CSV="${{ needs.get-environments.outputs.environments }}"
+          IFS=',' read -ra ALL_ENVIRONMENTS <<< "$ENVIRONMENTS_CSV"
+          
+          TARGET_ENVIRONMENT="${{ inputs.environment }}"
+          TENANT="${{ inputs.tenant }}"
+          VERSION_SHA="${{ github.sha }}"
+          VERSION="${{ steps.git_ref.outputs.version }}"
+          
+          echo "=== TESTING CONFIG-BASED DEPLOY WORKFLOW VALIDATION LOGIC ==="
+          echo "Target environment: $TARGET_ENVIRONMENT"
+          echo "Tenant: $TENANT"
+          echo "Version: $VERSION"
+          echo "Version SHA: $VERSION_SHA"
+          echo "Available environments: ${ALL_ENVIRONMENTS[*]}"
+          echo ""
+          sleep 2
+          
+          echo "STEP 1: Setting up environment validation logic..."
+          sleep 2
+          echo "   Available environments from config: ${ALL_ENVIRONMENTS[*]}"
+          sleep 2
+          
+          echo ""
+          echo "STEP 2: Checking tenant-specific rules..."
+          sleep 2
+          
+          # Skip 'sit' environment if tenant is 'mig'
+          if [[ "$TENANT" == "mig" ]]; then
+            echo "   Tenant is '$TENANT' - checking if it matches 'mig'..."
+            sleep 2
+            echo "   MATCH FOUND! Tenant '$TENANT' equals 'mig'"
+            sleep 2
+            echo "   Skipping 'sit' environment validation for 'mig' tenant"
+            sleep 2
+            
+            # Remove 'sit' from the environments array for 'mig' tenant
+            NEW_ENVIRONMENTS=()
+            for env in "${ALL_ENVIRONMENTS[@]}"; do
+              if [[ "$env" != "sit" ]]; then
+                NEW_ENVIRONMENTS+=("$env")
+              fi
+            done
+            ALL_ENVIRONMENTS=("${NEW_ENVIRONMENTS[@]}")
+            
+            echo "   Updated environment sequence: ${ALL_ENVIRONMENTS[*]}"
+            sleep 2
+          else
+            echo "   Tenant is '$TENANT' - checking if it matches 'mig'..."
+            sleep 2
+            echo "   NO MATCH! Tenant '$TENANT' does not equal 'mig'"
+            sleep 2
+            echo "   Keeping all environments including 'sit'"
+            sleep 2
+            echo "   Environment sequence remains: ${ALL_ENVIRONMENTS[*]}"
+            sleep 2
+          fi
+          echo ""
+          sleep 2
+          
+          echo "STEP 3: Setting up version analysis..."
+          sleep 2
+          echo "   Version to be deployed: $VERSION"
+          sleep 2
+          
+          # Split the version into MAJOR, MINOR, and PATCH components
+          IFS='.' read -r -a VERSION_PARTS <<< "${VERSION//v/}"
+          MAJOR="${VERSION_PARTS[0]}"
+          MINOR="${VERSION_PARTS[1]}"
+          PATCH="${VERSION_PARTS[2]}"
+          
+          echo "   Version components: MAJOR=$MAJOR, MINOR=$MINOR, PATCH=$PATCH"
+          sleep 2
+          
+          if (( PATCH == 0 )); then
+            echo "   This is a BASE VERSION (PATCH=0) - checking exact version match"
+            sleep 2
+          else
+            echo "   This is a HOTFIX VERSION (PATCH>0) - checking MAJOR.MINOR.* pattern"
+            sleep 2
+          fi
+          echo ""
+          
+          # Function to simulate deployment check
+          simulate_deployment_check() {
+            local env=$1
+            local ref_pattern=$2
+            
+            echo "STEP 4: Checking deployments in $env..."
+            sleep 2
+            echo "   Reference pattern: $ref_pattern"
+            sleep 2
+            echo "   Simulating: All deployments are successful"
+            sleep 2
+            echo "   Found successful deployment with ID 12345 in $env"
+            sleep 2
+            return 0
+          }
+          
+          echo "STEP 5: Starting environment validation loop..."
+          sleep 2
+          echo "   Target environment: $TARGET_ENVIRONMENT"
+          sleep 2
+          echo "   Environments to check: ${ALL_ENVIRONMENTS[*]}"
+          sleep 2
+          echo ""
+          
+          # Loop through environments prior to the target environment
+          echo "STEP 6: Validating each environment in sequence..."
+          sleep 2
+          for ENV in "${ALL_ENVIRONMENTS[@]}"; do
+            echo ""
+            echo "   Processing environment: $ENV"
+            sleep 2
+            
+            if [[ "$ENV" == "$TARGET_ENVIRONMENT" ]]; then
+              echo "   REACHED TARGET! Environment '$ENV' equals target '$TARGET_ENVIRONMENT'"
+              sleep 2
+              echo "   Stopping validation - no need to check target environment"
+              sleep 2
+              break
+            fi
+
+            echo "   Environment '$ENV' comes before target '$TARGET_ENVIRONMENT'"
+            sleep 2
+            echo "   Must validate successful deployment in '$ENV' before proceeding"
+            sleep 2
+            
+            if (( PATCH == 0 )); then
+              # For base versions, check if the exact version has been deployed successfully
+              ESCAPED_VERSION="${VERSION//./[.]}"  # Replace '.' with '[.]' for regex
+              REF_PATTERN="^$ESCAPED_VERSION$"
+              echo "   Using exact version pattern: $REF_PATTERN"
+              sleep 2
+            else
+              # For hotfix versions, check if any version within the same MAJOR.MINOR has been deployed successfully
+              REF_PATTERN="^v$MAJOR[.]$MINOR[.]"  # Matches any version starting with 'vMAJOR.MINOR.'
+              echo "   Using MAJOR.MINOR pattern: $REF_PATTERN"
+              sleep 2
+            fi
+            
+            if ! simulate_deployment_check "$ENV" "$REF_PATTERN"; then
+              echo ""
+              echo "STEP 7: VALIDATION FAILED!"
+              sleep 2
+              echo "   Deployment check failed for environment $ENV"
+              sleep 2
+              echo "   Cannot proceed to target environment '$TARGET_ENVIRONMENT'"
+              sleep 2
+              echo "   Validation failed - deployment cannot proceed"
+              sleep 2
+              exit 1
+            fi
+            echo "   Environment '$ENV' validation passed"
+            sleep 2
+          done
+          
+          echo ""
+          echo "STEP 7: VALIDATION SUCCESS!"
+          sleep 2
+          echo "   All required environment checks passed"
+          sleep 2
+          echo "   Deployment can proceed to $TARGET_ENVIRONMENT!"
+          sleep 2
+          echo ""
+
+      - name: Test deployment step
+        run: |
+          echo "STEP 8: SIMULATING DEPLOYMENT STEP"
+          sleep 2
+          echo "   Deploying to ${{ inputs.environment }}"
+          sleep 2
+          echo "   Tenant: ${{ inputs.tenant }}"
+          sleep 2
+          echo "   Version: ${{ steps.git_ref.outputs.version }}"
+          sleep 2
+          echo "   Deployment completed successfully"
+          sleep 2
+          
+          echo ""
+          echo "FINAL SUMMARY:"
+          sleep 2
+          echo "   Tenant: ${{ inputs.tenant }}"
+          sleep 2
+          echo "   Target: ${{ inputs.environment }}"
+          sleep 2
+          echo "   Version: ${{ steps.git_ref.outputs.version }}"
+          sleep 2
+          echo "   Available environments: ${{ needs.get-environments.outputs.environments }}"
+          sleep 2
+          
+          if [[ "${{ inputs.tenant }}" == "mig" ]]; then
+            echo "   SIT environment was skipped for 'mig' tenant"
+            sleep 2
+            echo "   This means 'mig' tenant can deploy: dev -> uat -> prod (skipping sit)"
+            sleep 2
+          else
+            echo "   This means '${{ inputs.tenant }}' tenant follows normal flow: dev -> sit -> uat -> prod"
+            sleep 2
+          fi
+          
+          echo ""
+          echo "Test completed successfully!" 
