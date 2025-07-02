@@ -1,0 +1,7 @@
+# Ignore deploy.yml file (keep locally but don't commit)
+deploy.yml
+
+# Common files to ignore
+.DS_Store
+*.log
+.env 
